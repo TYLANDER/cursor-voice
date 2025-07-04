@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Message types for webview communication
 interface WebviewMessage {
-  type: 'transcript' | 'ai-request' | 'error' | 'status';
+  type: 'transcript' | 'ai-request' | 'error' | 'status' | 'settings-get' | 'settings-save';
   data: any;
 }
 
@@ -23,6 +23,17 @@ interface AIRequestMessage {
   data: {
     prompt: string;
     context?: string;
+  };
+}
+
+interface SettingsMessage {
+  type: 'settings-save';
+  data: {
+    aiProvider: string;
+    openaiApiKey: string;
+    claudeApiKey: string;
+    openaiModel: string;
+    claudeModel: string;
   };
 }
 
@@ -66,6 +77,12 @@ export function activate(context: vscode.ExtensionContext) {
             break;
           case 'status':
             handleStatus(message.data, panel);
+            break;
+          case 'settings-get':
+            handleSettingsGet(panel);
+            break;
+          case 'settings-save':
+            handleSettingsSave(message.data, panel);
             break;
         }
       },
@@ -144,6 +161,69 @@ function getApiKey(provider: string): string {
   }
 }
 
+function handleSettingsGet(panel: vscode.WebviewPanel) {
+  const config = vscode.workspace.getConfiguration('cursorVoice');
+  
+  const settings = {
+    aiProvider: config.get<string>('aiProvider', 'openai'),
+    openaiApiKey: config.get<string>('openaiApiKey', ''),
+    claudeApiKey: config.get<string>('claudeApiKey', ''),
+    openaiModel: config.get<string>('openaiModel', 'gpt-4'),
+    claudeModel: config.get<string>('claudeModel', 'claude-3-sonnet-20240229')
+  };
+
+  panel.webview.postMessage({
+    type: 'settings-data',
+    data: settings
+  });
+}
+
+async function handleSettingsSave(data: any, panel: vscode.WebviewPanel) {
+  try {
+    const config = vscode.workspace.getConfiguration('cursorVoice');
+    
+    // Update all settings
+    await config.update('aiProvider', data.aiProvider, vscode.ConfigurationTarget.Global);
+    await config.update('openaiApiKey', data.openaiApiKey, vscode.ConfigurationTarget.Global);
+    await config.update('claudeApiKey', data.claudeApiKey, vscode.ConfigurationTarget.Global);
+    await config.update('openaiModel', data.openaiModel, vscode.ConfigurationTarget.Global);
+    await config.update('claudeModel', data.claudeModel, vscode.ConfigurationTarget.Global);
+
+    // Reinitialize AI clients with new settings
+    initializeAIClients();
+
+    // Send success message
+    panel.webview.postMessage({
+      type: 'settings-saved',
+      data: { 
+        success: true,
+        message: 'Settings saved successfully!'
+      }
+    });
+
+    // Send updated init data
+    const hasApiKey = getApiKey(data.aiProvider) !== '';
+    panel.webview.postMessage({
+      type: 'init',
+      data: { 
+        status: 'Extension ready',
+        capabilities: ['speech-recognition', 'ai-processing'],
+        aiProvider: data.aiProvider,
+        hasApiKey: hasApiKey
+      }
+    });
+
+  } catch (error) {
+    panel.webview.postMessage({
+      type: 'settings-saved',
+      data: { 
+        success: false,
+        message: `Failed to save settings: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    });
+  }
+}
+
 function handleTranscriptMessage(data: any, panel: vscode.WebviewPanel) {
   // Log transcript data for debugging
   console.log('Transcript received:', data);
@@ -177,7 +257,7 @@ async function handleAIRequest(data: any, panel: vscode.WebviewPanel) {
     panel.webview.postMessage({
       type: 'ai-response',
       data: {
-        response: `Error: No API key configured for ${aiProvider}. Please set your API key in VS Code settings.`,
+        response: `Error: No API key configured for ${aiProvider}. Please set your API key in the Settings.`,
         status: 'error'
       }
     });

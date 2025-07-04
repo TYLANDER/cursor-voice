@@ -15,11 +15,20 @@ const vscode = window.acquireVsCodeApi();
 
 // Message types for extension communication
 interface ExtensionMessage {
-  type: 'init' | 'transcript-ack' | 'ai-response' | 'error';
+  type: 'init' | 'transcript-ack' | 'ai-response' | 'error' | 'settings-data' | 'settings-saved';
   data: any;
 }
 
+interface Settings {
+  aiProvider: string;
+  openaiApiKey: string;
+  claudeApiKey: string;
+  openaiModel: string;
+  claudeModel: string;
+}
+
 const App = () => {
+  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main');
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
@@ -31,6 +40,19 @@ const App = () => {
   const [aiProvider, setAiProvider] = useState('openai');
   const [hasApiKey, setHasApiKey] = useState(false);
   const [aiResponseProvider, setAiResponseProvider] = useState('');
+  const [successMessage, setSuccessMessage] = useState('');
+  
+  // Settings state
+  const [settings, setSettings] = useState<Settings>({
+    aiProvider: 'openai',
+    openaiApiKey: '',
+    claudeApiKey: '',
+    openaiModel: 'gpt-4',
+    claudeModel: 'claude-3-sonnet-20240229'
+  });
+  const [settingsLoading, setSettingsLoading] = useState(false);
+  const [showApiKeys, setShowApiKeys] = useState(false);
+  
   const recognitionRef = useRef<any>(null);
 
   useEffect(() => {
@@ -61,6 +83,19 @@ const App = () => {
         case 'error':
           setError(message.data.message);
           setAiLoading(false);
+          break;
+        case 'settings-data':
+          setSettings(message.data);
+          setSettingsLoading(false);
+          break;
+        case 'settings-saved':
+          setSettingsLoading(false);
+          if (message.data.success) {
+            setSuccessMessage(message.data.message);
+            setTimeout(() => setSuccessMessage(''), 3000);
+          } else {
+            setError(message.data.message);
+          }
           break;
       }
     };
@@ -190,7 +225,7 @@ const App = () => {
     }
     
     if (!hasApiKey) {
-      setError(`No API key configured for ${aiProvider}. Please set your API key in VS Code settings.`);
+      setError(`No API key configured for ${aiProvider}. Please configure it in the Settings.`);
       return;
     }
     
@@ -204,6 +239,36 @@ const App = () => {
         prompt: finalTranscript,
         context: 'Voice transcription for AI processing'
       }
+    });
+  };
+
+  const openSettings = () => {
+    setCurrentView('settings');
+    setSettingsLoading(true);
+    setError(null);
+    setSuccessMessage('');
+    
+    // Request current settings from extension
+    vscode.postMessage({
+      type: 'settings-get',
+      data: {}
+    });
+  };
+
+  const closeSettings = () => {
+    setCurrentView('main');
+    setError(null);
+    setSuccessMessage('');
+  };
+
+  const saveSettings = () => {
+    setSettingsLoading(true);
+    setError(null);
+    
+    // Send settings to extension
+    vscode.postMessage({
+      type: 'settings-save',
+      data: settings
     });
   };
 
@@ -223,9 +288,282 @@ const App = () => {
     }
   };
 
+  const maskApiKey = (key: string) => {
+    if (!key) return '';
+    if (key.length <= 8) return '•'.repeat(key.length);
+    return key.substring(0, 4) + '•'.repeat(key.length - 8) + key.substring(key.length - 4);
+  };
+
+  if (currentView === 'settings') {
+    return (
+      <div style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <button
+            onClick={closeSettings}
+            style={{
+              fontSize: '1.2rem',
+              padding: '0.25rem 0.5rem',
+              backgroundColor: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              marginRight: '1rem'
+            }}
+          >
+            ← Back
+          </button>
+          <h2 style={{ margin: 0 }}>⚙️ Settings</h2>
+        </div>
+
+        {settingsLoading && (
+          <div style={{ 
+            padding: '1rem', 
+            backgroundColor: '#e3f2fd', 
+            borderRadius: '4px',
+            marginBottom: '1rem',
+            fontSize: '0.9rem'
+          }}>
+            Loading settings...
+          </div>
+        )}
+
+        {successMessage && (
+          <div style={{ 
+            padding: '1rem', 
+            backgroundColor: '#e8f5e8', 
+            color: '#2e7d32',
+            borderRadius: '4px',
+            marginBottom: '1rem'
+          }}>
+            ✅ {successMessage}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ 
+            padding: '1rem', 
+            backgroundColor: '#ffebee', 
+            color: '#c62828', 
+            borderRadius: '4px',
+            marginBottom: '1rem'
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ marginBottom: '2rem' }}>
+          <h3>🤖 AI Provider</h3>
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'flex', alignItems: 'center', marginBottom: '0.5rem' }}>
+              <input
+                type="radio"
+                name="aiProvider"
+                value="openai"
+                checked={settings.aiProvider === 'openai'}
+                onChange={(e) => setSettings({...settings, aiProvider: e.target.value})}
+                style={{ marginRight: '0.5rem' }}
+              />
+              🤖 OpenAI (GPT-4, GPT-3.5)
+            </label>
+            <label style={{ display: 'flex', alignItems: 'center' }}>
+              <input
+                type="radio"
+                name="aiProvider"
+                value="claude"
+                checked={settings.aiProvider === 'claude'}
+                onChange={(e) => setSettings({...settings, aiProvider: e.target.value})}
+                style={{ marginRight: '0.5rem' }}
+              />
+              🧠 Claude (Anthropic)
+            </label>
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '2rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1rem' }}>
+            <h3 style={{ margin: 0, marginRight: '1rem' }}>🔑 API Keys</h3>
+            <button
+              onClick={() => setShowApiKeys(!showApiKeys)}
+              style={{
+                fontSize: '0.8rem',
+                padding: '0.25rem 0.5rem',
+                backgroundColor: '#f5f5f5',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              {showApiKeys ? '👁️ Hide' : '👁️ Show'}
+            </button>
+          </div>
+          
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+              OpenAI API Key:
+            </label>
+            <input
+              type={showApiKeys ? 'text' : 'password'}
+              value={settings.openaiApiKey}
+              onChange={(e) => setSettings({...settings, openaiApiKey: e.target.value})}
+              placeholder="sk-..."
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '0.9rem',
+                fontFamily: 'monospace'
+              }}
+            />
+            {!showApiKeys && settings.openaiApiKey && (
+              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                Current: {maskApiKey(settings.openaiApiKey)}
+              </div>
+            )}
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+              Claude API Key:
+            </label>
+            <input
+              type={showApiKeys ? 'text' : 'password'}
+              value={settings.claudeApiKey}
+              onChange={(e) => setSettings({...settings, claudeApiKey: e.target.value})}
+              placeholder="sk-ant-..."
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '0.9rem',
+                fontFamily: 'monospace'
+              }}
+            />
+            {!showApiKeys && settings.claudeApiKey && (
+              <div style={{ fontSize: '0.8rem', color: '#666', marginTop: '0.25rem' }}>
+                Current: {maskApiKey(settings.claudeApiKey)}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div style={{ marginBottom: '2rem' }}>
+          <h3>🎯 Model Selection</h3>
+          
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+              OpenAI Model:
+            </label>
+            <select
+              value={settings.openaiModel}
+              onChange={(e) => setSettings({...settings, openaiModel: e.target.value})}
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '0.9rem'
+              }}
+            >
+              <option value="gpt-4">GPT-4 (Most capable)</option>
+              <option value="gpt-4-turbo">GPT-4 Turbo (Fast & capable)</option>
+              <option value="gpt-3.5-turbo">GPT-3.5 Turbo (Fast & economical)</option>
+            </select>
+          </div>
+
+          <div style={{ marginBottom: '1rem' }}>
+            <label style={{ display: 'block', marginBottom: '0.5rem', fontWeight: 'bold' }}>
+              Claude Model:
+            </label>
+            <select
+              value={settings.claudeModel}
+              onChange={(e) => setSettings({...settings, claudeModel: e.target.value})}
+              style={{
+                width: '100%',
+                padding: '0.5rem',
+                border: '1px solid #ccc',
+                borderRadius: '4px',
+                fontSize: '0.9rem'
+              }}
+            >
+              <option value="claude-3-opus-20240229">Claude 3 Opus (Most capable)</option>
+              <option value="claude-3-sonnet-20240229">Claude 3 Sonnet (Balanced)</option>
+              <option value="claude-3-haiku-20240307">Claude 3 Haiku (Fast)</option>
+            </select>
+          </div>
+        </div>
+
+        <div style={{ display: 'flex', gap: '1rem' }}>
+          <button
+            onClick={saveSettings}
+            disabled={settingsLoading}
+            style={{
+              flex: 1,
+              fontSize: '1.1rem',
+              padding: '0.75rem 1.5rem',
+              backgroundColor: settingsLoading ? '#999' : '#4caf50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: settingsLoading ? 'not-allowed' : 'pointer'
+            }}
+          >
+            {settingsLoading ? '💾 Saving...' : '💾 Save Settings'}
+          </button>
+          
+          <button
+            onClick={closeSettings}
+            style={{
+              fontSize: '1rem',
+              padding: '0.75rem 1rem',
+              backgroundColor: '#f5f5f5',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            Cancel
+          </button>
+        </div>
+
+        <div style={{ 
+          marginTop: '2rem', 
+          padding: '1rem', 
+          backgroundColor: '#f9f9f9', 
+          borderRadius: '4px',
+          fontSize: '0.85rem',
+          color: '#666'
+        }}>
+          <strong>💡 Tips:</strong>
+          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem' }}>
+            <li>Get OpenAI API keys at <code>platform.openai.com</code></li>
+            <li>Get Claude API keys at <code>console.anthropic.com</code></li>
+            <li>API keys are stored securely in VS Code settings</li>
+            <li>You can switch between providers anytime</li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
-      <h2>CursorVoice</h2>
+      <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
+        <h2 style={{ margin: 0 }}>CursorVoice</h2>
+        <button
+          onClick={openSettings}
+          style={{
+            fontSize: '1rem',
+            padding: '0.5rem 1rem',
+            backgroundColor: '#f5f5f5',
+            border: '1px solid #ccc',
+            borderRadius: '4px',
+            cursor: 'pointer'
+          }}
+        >
+          ⚙️ Settings
+        </button>
+      </div>
       
       <div style={{ 
         marginBottom: '1rem', 
@@ -251,6 +589,18 @@ const App = () => {
           </span>
         )}
       </div>
+      
+      {successMessage && (
+        <div style={{ 
+          padding: '1rem', 
+          backgroundColor: '#e8f5e8', 
+          color: '#2e7d32',
+          borderRadius: '4px',
+          marginBottom: '1rem'
+        }}>
+          ✅ {successMessage}
+        </div>
+      )}
       
       {!isSupported && (
         <div style={{ 
