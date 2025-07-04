@@ -9,7 +9,11 @@ CursorVoice is a VS Code extension that brings voice interaction to your coding 
 ### 🎯 **Core Features**
 - **🎤 Voice Recognition** - Real-time speech-to-text using Web Speech API
 - **📝 Live Transcription** - See your words appear as you speak
-- **🤖 AI Integration** - Send voice transcripts to AI for processing
+- **🤖 AI Integration** - Full OpenAI and Claude API support with multiple models
+- **🧠 Context Awareness** - Automatically include current code context in AI requests
+- **💬 Conversation History** - Save, load, and manage conversation sessions
+- **⚙️ Settings Management** - Visual configuration for AI providers and API keys
+- **⌨️ Keyboard Shortcuts** - Quick voice activation and controls with hotkeys
 - **🌊 Visual Feedback** - Animated waveform shows listening status
 - **📊 Status Integration** - Real-time updates in VS Code status bar
 
@@ -18,7 +22,8 @@ CursorVoice is a VS Code extension that brings voice interaction to your coding 
 - **🔄 Real-time Communication** - Seamless messaging between UI and extension
 - **🚨 Error Handling** - Comprehensive error reporting and recovery
 - **🌐 Browser Support** - Works in Chrome, Edge, and Safari
-- **🎨 Modern UI** - Clean React-based interface
+- **🎨 Modern UI** - Clean React-based interface with multiple views
+- **💾 Persistent Storage** - Conversation history saved in VS Code's global state
 
 ## 📦 Installation
 
@@ -72,44 +77,61 @@ CursorVoice is a VS Code extension that brings voice interaction to your coding 
    - Type "Open CursorVoice"
    - Select the command
 
-2. **Start Voice Recognition**
+2. **Configure Settings**
+   - Click "⚙️ Settings" to configure AI providers
+   - Add your OpenAI or Claude API keys
+   - Select preferred models for each provider
+
+3. **Start Voice Recognition**
    - Click the "🎤 Start Listening" button
    - Speak naturally - your words will appear in real-time
    - Click "🛑 Stop Listening" when done
 
-3. **Send to AI**
+4. **Send to AI**
+   - Toggle context awareness to include current code
    - Click "🤖 Send to AI" to process your transcript
    - AI response will appear below your transcript
 
-4. **Clear and Reset**
+5. **Manage Conversations**
+   - Click "💾 Save Conversation" to save your interaction
+   - Click "📚 History" to view saved conversations
+   - Load previous conversations to continue discussions
+
+6. **Clear and Reset**
    - Use "Clear" button to reset transcripts
    - Status updates appear in VS Code status bar
 
+7. **Keyboard Shortcuts** (when CursorVoice panel is open)
+   - `Ctrl+Shift+V` (Mac: `Cmd+Shift+V`) - Toggle voice listening
+   - `Ctrl+Shift+A` (Mac: `Cmd+Shift+A`) - Send to AI
+   - `Ctrl+Shift+C` (Mac: `Cmd+Shift+C`) - Clear transcript
+   - `Ctrl+Shift+,` (Mac: `Cmd+Shift+,`) - Open settings
+   - `Ctrl+Shift+H` (Mac: `Cmd+Shift+H`) - Open history
+   - `Ctrl+Shift+S` (Mac: `Cmd+Shift+S`) - Save conversation
+
 ## 🛠️ Feature Roadmap
 
-### 🔄 **Current Status (v0.1)**
+### ✅ **Completed Features (v0.1)**
 - ✅ Voice recognition with Web Speech API
 - ✅ Real-time transcription display
 - ✅ Extension ↔ Webview messaging
-- ✅ Basic AI request handling (simulated)
+- ✅ Real AI integration (OpenAI/Claude API)
+- ✅ Settings UI for API configuration
+- ✅ Context awareness with code integration
+- ✅ Conversation history management
 - ✅ Error handling and status reporting
-
-### 🚧 **In Progress**
-- 🔄 Real AI integration (OpenAI/Claude API)
-- 🔄 Settings UI for API configuration
-- 🔄 Conversation history management
-- 🔄 Keyboard shortcuts for quick activation
+- ✅ Multiple AI model support
+- ✅ Persistent conversation storage
+- ✅ Keyboard shortcuts for quick voice activation
 
 ### 📋 **Planned Features**
-- 🎯 **AI Providers** - OpenAI, Claude, local models
-- ⚙️ **Settings Panel** - API keys, voice options, preferences
-- 📚 **Context Awareness** - Integrate with current code/file context
-- 🔄 **Conversation History** - Save and manage chat sessions
-- ⌨️ **Keyboard Shortcuts** - Customizable hotkeys for voice activation
 - 🎨 **Theme Support** - Light/dark mode compatibility
 - 🌍 **Multi-language** - Support for different languages
 - 📁 **File Integration** - Direct voice commands for file operations
 - 🔍 **Code Analysis** - Voice-activated code reviews and suggestions
+- 🔄 **Live AI Streaming** - Real-time AI response streaming
+- 📤 **Export Features** - Export conversations to markdown/text
+- 🏷️ **Conversation Tags** - Organize conversations with tags
 
 ### 🎯 **Future Vision**
 - 🧠 **Smart Context** - Automatic code context detection

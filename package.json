@@ -2,7 +2,7 @@
   "name": "cursor-voice",
   "displayName": "CursorVoice",
   "description": "Voice-powered AI chat for Cursor with live transcription.",
-  "version": "0.0.1",
+  "version": "0.1.0",
   "engines": {
     "vscode": "^1.101.0"
   },
@@ -16,6 +16,68 @@
       {
         "command": "cursor-voice.open",
         "title": "Open CursorVoice"
+      },
+      {
+        "command": "cursor-voice.toggleListening",
+        "title": "CursorVoice: Toggle Voice Listening"
+      },
+      {
+        "command": "cursor-voice.sendToAI",
+        "title": "CursorVoice: Send to AI"
+      },
+      {
+        "command": "cursor-voice.clearTranscript",
+        "title": "CursorVoice: Clear Transcript"
+      },
+      {
+        "command": "cursor-voice.openSettings",
+        "title": "CursorVoice: Open Settings"
+      },
+      {
+        "command": "cursor-voice.openHistory",
+        "title": "CursorVoice: Open History"
+      },
+      {
+        "command": "cursor-voice.saveConversation",
+        "title": "CursorVoice: Save Conversation"
+      }
+    ],
+    "keybindings": [
+      {
+        "command": "cursor-voice.toggleListening",
+        "key": "ctrl+shift+v",
+        "mac": "cmd+shift+v",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cursor-voice.sendToAI",
+        "key": "ctrl+shift+a",
+        "mac": "cmd+shift+a",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cursor-voice.clearTranscript",
+        "key": "ctrl+shift+c",
+        "mac": "cmd+shift+c",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cursor-voice.openSettings",
+        "key": "ctrl+shift+comma",
+        "mac": "cmd+shift+comma",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cursor-voice.openHistory",
+        "key": "ctrl+shift+h",
+        "mac": "cmd+shift+h",
+        "when": "editorTextFocus"
+      },
+      {
+        "command": "cursor-voice.saveConversation",
+        "key": "ctrl+shift+s",
+        "mac": "cmd+shift+s",
+        "when": "editorTextFocus"
       }
     ],
     "configuration": {

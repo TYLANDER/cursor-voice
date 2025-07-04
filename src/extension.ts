@@ -5,7 +5,9 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Message types for webview communication
 interface WebviewMessage {
-  type: 'transcript' | 'ai-request' | 'error' | 'status' | 'settings-get' | 'settings-save' | 'context-get';
+  type: 'transcript' | 'ai-request' | 'error' | 'status' | 'settings-get' | 'settings-save' | 'context-get' | 
+        'conversation-save' | 'conversation-load' | 'conversation-list' | 'conversation-delete' | 'conversation-new' |
+        'keyboard-shortcut';
   data: any;
 }
 
@@ -51,11 +53,38 @@ interface CodeContext {
   relativePath?: string;
 }
 
+interface ConversationMessage {
+  id: string;
+  timestamp: string;
+  type: 'user' | 'assistant';
+  content: string;
+  provider?: string;
+  includedContext?: boolean;
+  context?: CodeContext;
+}
+
+interface Conversation {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ConversationMessage[];
+}
+
 // AI provider instances
 let openaiClient: OpenAI | null = null;
 let anthropicClient: Anthropic | null = null;
 
+// Extension context for persistent storage
+let extensionContext: vscode.ExtensionContext;
+
+// Global webview panel reference for keyboard shortcuts
+let globalWebviewPanel: vscode.WebviewPanel | null = null;
+
 export function activate(context: vscode.ExtensionContext) {
+  // Store extension context for persistent storage
+  extensionContext = context;
+  
   // Initialize AI clients
   initializeAIClients();
 
@@ -101,6 +130,25 @@ export function activate(context: vscode.ExtensionContext) {
           case 'context-get':
             handleContextGet(panel);
             break;
+          case 'conversation-save':
+            handleConversationSave(message.data, panel);
+            break;
+          case 'conversation-load':
+            handleConversationLoad(message.data, panel);
+            break;
+          case 'conversation-list':
+            handleConversationList(panel);
+            break;
+          case 'conversation-delete':
+            handleConversationDelete(message.data, panel);
+            break;
+          case 'conversation-new':
+            handleConversationNew(panel);
+            break;
+          case 'keyboard-shortcut':
+            // Keyboard shortcuts are handled by sending messages to webview
+            // No special handling needed in extension
+            break;
         }
       },
       undefined,
@@ -129,11 +177,86 @@ export function activate(context: vscode.ExtensionContext) {
       type: 'init',
       data: { 
         status: 'Extension ready',
-        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness'],
+        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness', 'conversation-history'],
         aiProvider: aiProvider,
         hasApiKey: hasApiKey
       }
     });
+
+    // Store panel reference for keyboard shortcuts
+    globalWebviewPanel = panel;
+
+    // Handle panel disposal
+    panel.onDidDispose(() => {
+      globalWebviewPanel = null;
+    }, null, context.subscriptions);
+  });
+
+  // Register keyboard shortcut commands
+  const toggleListeningDisposable = vscode.commands.registerCommand('cursor-voice.toggleListening', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'toggle-listening' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
+  });
+
+  const sendToAIDisposable = vscode.commands.registerCommand('cursor-voice.sendToAI', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'send-to-ai' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
+  });
+
+  const clearTranscriptDisposable = vscode.commands.registerCommand('cursor-voice.clearTranscript', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'clear-transcript' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
+  });
+
+  const openSettingsDisposable = vscode.commands.registerCommand('cursor-voice.openSettings', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'open-settings' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
+  });
+
+  const openHistoryDisposable = vscode.commands.registerCommand('cursor-voice.openHistory', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'open-history' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
+  });
+
+  const saveConversationDisposable = vscode.commands.registerCommand('cursor-voice.saveConversation', () => {
+    if (globalWebviewPanel) {
+      globalWebviewPanel.webview.postMessage({
+        type: 'keyboard-shortcut',
+        data: { action: 'save-conversation' }
+      });
+    } else {
+      vscode.window.showWarningMessage('CursorVoice panel is not open. Open it first with Ctrl+Shift+P > "Open CursorVoice"');
+    }
   });
 
   // Listen for configuration changes
@@ -143,7 +266,16 @@ export function activate(context: vscode.ExtensionContext) {
     }
   });
 
-  context.subscriptions.push(disposable, configDisposable);
+  context.subscriptions.push(
+    disposable, 
+    toggleListeningDisposable,
+    sendToAIDisposable,
+    clearTranscriptDisposable,
+    openSettingsDisposable,
+    openHistoryDisposable,
+    saveConversationDisposable,
+    configDisposable
+  );
 }
 
 function initializeAIClients() {
@@ -176,6 +308,167 @@ function getApiKey(provider: string): string {
     default:
       return '';
   }
+}
+
+// Conversation management functions
+function generateId(): string {
+  return Date.now().toString(36) + Math.random().toString(36).substr(2);
+}
+
+function getConversations(): Conversation[] {
+  return extensionContext.globalState.get('cursorVoice.conversations', []);
+}
+
+function saveConversations(conversations: Conversation[]): void {
+  extensionContext.globalState.update('cursorVoice.conversations', conversations);
+}
+
+function handleConversationSave(data: any, panel: vscode.WebviewPanel) {
+  try {
+    const conversations = getConversations();
+    
+    if (data.conversationId) {
+      // Update existing conversation
+      const index = conversations.findIndex(c => c.id === data.conversationId);
+      if (index !== -1) {
+        conversations[index] = {
+          ...conversations[index],
+          title: data.title,
+          updatedAt: new Date().toISOString(),
+          messages: data.messages
+        };
+      }
+    } else {
+      // Create new conversation
+      const newConversation: Conversation = {
+        id: generateId(),
+        title: data.title,
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+        messages: data.messages
+      };
+      conversations.unshift(newConversation); // Add to beginning
+    }
+    
+    saveConversations(conversations);
+    
+    panel.webview.postMessage({
+      type: 'conversation-saved',
+      data: { 
+        success: true,
+        conversationId: data.conversationId || conversations[0].id,
+        message: 'Conversation saved successfully!'
+      }
+    });
+    
+    // Send updated conversation list
+    handleConversationList(panel);
+    
+  } catch (error) {
+    panel.webview.postMessage({
+      type: 'conversation-saved',
+      data: { 
+        success: false,
+        message: `Failed to save conversation: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    });
+  }
+}
+
+function handleConversationLoad(data: any, panel: vscode.WebviewPanel) {
+  try {
+    const conversations = getConversations();
+    const conversation = conversations.find(c => c.id === data.conversationId);
+    
+    if (conversation) {
+      panel.webview.postMessage({
+        type: 'conversation-loaded',
+        data: conversation
+      });
+    } else {
+      panel.webview.postMessage({
+        type: 'conversation-loaded',
+        data: { 
+          error: 'Conversation not found'
+        }
+      });
+    }
+  } catch (error) {
+    panel.webview.postMessage({
+      type: 'conversation-loaded',
+      data: { 
+        error: `Failed to load conversation: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    });
+  }
+}
+
+function handleConversationList(panel: vscode.WebviewPanel) {
+  try {
+    const conversations = getConversations();
+    
+    panel.webview.postMessage({
+      type: 'conversation-list',
+      data: conversations.map(c => ({
+        id: c.id,
+        title: c.title,
+        createdAt: c.createdAt,
+        updatedAt: c.updatedAt,
+        messageCount: c.messages.length
+      }))
+    });
+  } catch (error) {
+    panel.webview.postMessage({
+      type: 'conversation-list',
+      data: { 
+        error: `Failed to load conversations: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    });
+  }
+}
+
+function handleConversationDelete(data: any, panel: vscode.WebviewPanel) {
+  try {
+    const conversations = getConversations();
+    const filteredConversations = conversations.filter(c => c.id !== data.conversationId);
+    
+    if (filteredConversations.length < conversations.length) {
+      saveConversations(filteredConversations);
+      panel.webview.postMessage({
+        type: 'conversation-deleted',
+        data: { 
+          success: true,
+          message: 'Conversation deleted successfully!'
+        }
+      });
+      
+      // Send updated conversation list
+      handleConversationList(panel);
+    } else {
+      panel.webview.postMessage({
+        type: 'conversation-deleted',
+        data: { 
+          success: false,
+          message: 'Conversation not found'
+        }
+      });
+    }
+  } catch (error) {
+    panel.webview.postMessage({
+      type: 'conversation-deleted',
+      data: { 
+        success: false,
+        message: `Failed to delete conversation: ${error instanceof Error ? error.message : 'Unknown error'}`
+      }
+    });
+  }
+}
+
+function handleConversationNew(panel: vscode.WebviewPanel) {
+  panel.webview.postMessage({
+    type: 'conversation-new',
+    data: { success: true }
+  });
 }
 
 function gatherCodeContext(): CodeContext {
@@ -311,7 +604,7 @@ async function handleSettingsSave(data: any, panel: vscode.WebviewPanel) {
       type: 'init',
       data: { 
         status: 'Extension ready',
-        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness'],
+        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness', 'conversation-history'],
         aiProvider: data.aiProvider,
         hasApiKey: hasApiKey
       }
@@ -370,11 +663,12 @@ async function handleAIRequest(data: any, panel: vscode.WebviewPanel) {
 
   try {
     let prompt = data.prompt;
+    let currentContext = null;
     
     // Add context if requested
     if (data.includeContext) {
-      const context = gatherCodeContext();
-      const contextString = formatContextForAI(context);
+      currentContext = gatherCodeContext();
+      const contextString = formatContextForAI(currentContext);
       prompt = contextString + "**User Question:** " + data.prompt;
     }
     
@@ -394,7 +688,8 @@ async function handleAIRequest(data: any, panel: vscode.WebviewPanel) {
         response: response,
         status: 'success',
         provider: aiProvider,
-        includedContext: data.includeContext || false
+        includedContext: data.includeContext || false,
+        context: currentContext
       }
     });
     

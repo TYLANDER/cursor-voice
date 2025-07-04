@@ -15,7 +15,9 @@ const vscode = window.acquireVsCodeApi();
 
 // Message types for extension communication
 interface ExtensionMessage {
-  type: 'init' | 'transcript-ack' | 'ai-response' | 'error' | 'settings-data' | 'settings-saved' | 'context-data';
+  type: 'init' | 'transcript-ack' | 'ai-response' | 'error' | 'settings-data' | 'settings-saved' | 'context-data' |
+        'conversation-saved' | 'conversation-loaded' | 'conversation-list' | 'conversation-deleted' | 'conversation-new' |
+        'keyboard-shortcut';
   data: any;
 }
 
@@ -40,8 +42,34 @@ interface CodeContext {
   relativePath?: string;
 }
 
+interface ConversationMessage {
+  id: string;
+  timestamp: string;
+  type: 'user' | 'assistant';
+  content: string;
+  provider?: string;
+  includedContext?: boolean;
+  context?: CodeContext;
+}
+
+interface Conversation {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messages: ConversationMessage[];
+}
+
+interface ConversationSummary {
+  id: string;
+  title: string;
+  createdAt: string;
+  updatedAt: string;
+  messageCount: number;
+}
+
 const App = () => {
-  const [currentView, setCurrentView] = useState<'main' | 'settings'>('main');
+  const [currentView, setCurrentView] = useState<'main' | 'settings' | 'history'>('main');
   const [listening, setListening] = useState(false);
   const [transcript, setTranscript] = useState('');
   const [finalTranscript, setFinalTranscript] = useState('');
@@ -71,6 +99,13 @@ const App = () => {
   });
   const [settingsLoading, setSettingsLoading] = useState(false);
   const [showApiKeys, setShowApiKeys] = useState(false);
+  
+  // Conversation history state
+  const [conversations, setConversations] = useState<ConversationSummary[]>([]);
+  const [currentConversation, setCurrentConversation] = useState<Conversation | null>(null);
+  const [conversationMessages, setConversationMessages] = useState<ConversationMessage[]>([]);
+  const [conversationTitle, setConversationTitle] = useState('');
+  const [isNewConversation, setIsNewConversation] = useState(true);
   
   const recognitionRef = useRef<any>(null);
 
@@ -121,6 +156,59 @@ const App = () => {
           break;
         case 'context-data':
           setCurrentContext(message.data);
+          break;
+        case 'conversation-saved':
+          if (message.data.success) {
+            setSuccessMessage(message.data.message);
+            setCurrentConversation(prev => prev ? { ...prev, id: message.data.conversationId } : null);
+            setIsNewConversation(false);
+            setTimeout(() => setSuccessMessage(''), 3000);
+          } else {
+            setError(message.data.message);
+          }
+          break;
+        case 'conversation-loaded':
+          if (message.data.error) {
+            setError(message.data.error);
+          } else {
+            setCurrentConversation(message.data);
+            setConversationMessages(message.data.messages || []);
+            setConversationTitle(message.data.title);
+            setIsNewConversation(false);
+            // Load the last user message and AI response
+            const messages = message.data.messages || [];
+            const lastUserMessage = messages.filter((m: ConversationMessage) => m.type === 'user').pop();
+            const lastAssistantMessage = messages.filter((m: ConversationMessage) => m.type === 'assistant').pop();
+            if (lastUserMessage) {
+              setFinalTranscript(lastUserMessage.content);
+            }
+            if (lastAssistantMessage) {
+              setAiResponse(lastAssistantMessage.content);
+              setAiResponseProvider(lastAssistantMessage.provider || '');
+              setIncludedContext(lastAssistantMessage.includedContext || false);
+            }
+          }
+          break;
+        case 'conversation-list':
+          if (message.data.error) {
+            setError(message.data.error);
+          } else {
+            setConversations(message.data);
+          }
+          break;
+        case 'conversation-deleted':
+          if (message.data.success) {
+            setSuccessMessage(message.data.message);
+            setTimeout(() => setSuccessMessage(''), 3000);
+          } else {
+            setError(message.data.message);
+          }
+          break;
+        case 'conversation-new':
+          startNewConversation();
+          break;
+        case 'keyboard-shortcut':
+          handleKeyboardShortcut(message.data);
           break;
       }
     };
@@ -349,6 +437,122 @@ const App = () => {
     }
     
     return preview;
+  };
+
+  // Conversation history functions
+  const generateMessageId = () => {
+    return Date.now().toString(36) + Math.random().toString(36).substr(2);
+  };
+
+  const startNewConversation = () => {
+    setCurrentConversation(null);
+    setConversationMessages([]);
+    setConversationTitle('');
+    setIsNewConversation(true);
+    setFinalTranscript('');
+    setAiResponse('');
+    setAiResponseProvider('');
+    setIncludedContext(false);
+    setCurrentView('main');
+  };
+
+  const saveCurrentConversation = () => {
+    if (!finalTranscript && conversationMessages.length === 0) {
+      setError('No conversation to save');
+      return;
+    }
+
+    const messages = [...conversationMessages];
+    
+    // Add current user message if there's a transcript
+    if (finalTranscript.trim()) {
+      const userMessage: ConversationMessage = {
+        id: generateMessageId(),
+        timestamp: new Date().toISOString(),
+        type: 'user',
+        content: finalTranscript,
+        context: includedContext ? currentContext : undefined,
+        includedContext: includedContext
+      };
+      messages.push(userMessage);
+    }
+
+    // Add current AI response if there's one
+    if (aiResponse.trim()) {
+      const assistantMessage: ConversationMessage = {
+        id: generateMessageId(),
+        timestamp: new Date().toISOString(),
+        type: 'assistant',
+        content: aiResponse,
+        provider: aiResponseProvider,
+        includedContext: includedContext
+      };
+      messages.push(assistantMessage);
+    }
+
+    const title = conversationTitle || finalTranscript.substring(0, 50) + (finalTranscript.length > 50 ? '...' : '');
+
+    vscode.postMessage({
+      type: 'conversation-save',
+      data: {
+        conversationId: currentConversation?.id,
+        title: title,
+        messages: messages
+      }
+    });
+  };
+
+  const loadConversation = (conversationId: string) => {
+    vscode.postMessage({
+      type: 'conversation-load',
+      data: { conversationId }
+    });
+  };
+
+  const deleteConversation = (conversationId: string) => {
+    if (confirm('Are you sure you want to delete this conversation?')) {
+      vscode.postMessage({
+        type: 'conversation-delete',
+        data: { conversationId }
+      });
+    }
+  };
+
+  const openHistory = () => {
+    setCurrentView('history');
+    vscode.postMessage({
+      type: 'conversation-list',
+      data: {}
+    });
+  };
+
+  const closeHistory = () => {
+    setCurrentView('main');
+  };
+
+  const handleKeyboardShortcut = (data: any) => {
+    switch (data.action) {
+      case 'toggle-listening':
+        toggleListening();
+        break;
+      case 'send-to-ai':
+        sendToAI();
+        break;
+      case 'clear-transcript':
+        clearTranscript();
+        break;
+      case 'open-settings':
+        openSettings();
+        break;
+      case 'open-history':
+        openHistory();
+        break;
+      case 'save-conversation':
+        saveCurrentConversation();
+        break;
+      default:
+        console.warn('Unknown keyboard shortcut action:', data.action);
+    }
   };
 
   if (currentView === 'settings') {
@@ -603,23 +807,190 @@ const App = () => {
     );
   }
 
+  if (currentView === 'history') {
+    return (
+      <div style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
+        <div style={{ display: 'flex', alignItems: 'center', marginBottom: '1.5rem' }}>
+          <button
+            onClick={closeHistory}
+            style={{
+              fontSize: '1.2rem',
+              padding: '0.25rem 0.5rem',
+              backgroundColor: 'transparent',
+              border: 'none',
+              cursor: 'pointer',
+              marginRight: '1rem'
+            }}
+          >
+            ← Back
+          </button>
+          <h2 style={{ margin: 0, marginRight: '1rem' }}>📚 Conversation History</h2>
+          <button
+            onClick={startNewConversation}
+            style={{
+              fontSize: '1rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: '#4caf50',
+              color: 'white',
+              border: 'none',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            ✨ New Conversation
+          </button>
+        </div>
+
+        {successMessage && (
+          <div style={{ 
+            padding: '1rem', 
+            backgroundColor: '#e8f5e8', 
+            color: '#2e7d32',
+            borderRadius: '4px',
+            marginBottom: '1rem'
+          }}>
+            ✅ {successMessage}
+          </div>
+        )}
+
+        {error && (
+          <div style={{ 
+            padding: '1rem', 
+            backgroundColor: '#ffebee', 
+            color: '#c62828', 
+            borderRadius: '4px',
+            marginBottom: '1rem'
+          }}>
+            {error}
+          </div>
+        )}
+
+        <div style={{ marginBottom: '1rem' }}>
+          <h3>💬 Saved Conversations</h3>
+          {conversations.length === 0 ? (
+            <div style={{ 
+              padding: '2rem', 
+              textAlign: 'center', 
+              color: '#666',
+              backgroundColor: '#f5f5f5',
+              borderRadius: '4px'
+            }}>
+              No conversations saved yet. Start a new conversation to save your AI interactions!
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+              {conversations.map((conversation) => (
+                <div 
+                  key={conversation.id}
+                  style={{
+                    padding: '1rem',
+                    border: '1px solid #ddd',
+                    borderRadius: '4px',
+                    backgroundColor: '#f9f9f9',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center'
+                  }}
+                >
+                  <div style={{ flex: 1 }}>
+                    <h4 style={{ margin: '0 0 0.5rem 0', fontSize: '1.1rem' }}>
+                      {conversation.title}
+                    </h4>
+                    <div style={{ fontSize: '0.85rem', color: '#666' }}>
+                      {conversation.messageCount} messages • Created: {new Date(conversation.createdAt).toLocaleDateString()}
+                      {conversation.updatedAt !== conversation.createdAt && 
+                        ` • Updated: ${new Date(conversation.updatedAt).toLocaleDateString()}`
+                      }
+                    </div>
+                  </div>
+                  <div style={{ display: 'flex', gap: '0.5rem', marginLeft: '1rem' }}>
+                    <button
+                      onClick={() => loadConversation(conversation.id)}
+                      style={{
+                        fontSize: '0.9rem',
+                        padding: '0.5rem 1rem',
+                        backgroundColor: '#2196f3',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      📂 Load
+                    </button>
+                    <button
+                      onClick={() => deleteConversation(conversation.id)}
+                      style={{
+                        fontSize: '0.9rem',
+                        padding: '0.5rem 1rem',
+                        backgroundColor: '#f44336',
+                        color: 'white',
+                        border: 'none',
+                        borderRadius: '4px',
+                        cursor: 'pointer'
+                      }}
+                    >
+                      🗑️ Delete
+                    </button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <div style={{ 
+          marginTop: '2rem', 
+          padding: '1rem', 
+          backgroundColor: '#f9f9f9', 
+          borderRadius: '4px',
+          fontSize: '0.85rem',
+          color: '#666'
+        }}>
+          <strong>💡 About Conversations:</strong>
+          <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem' }}>
+            <li>Conversations are automatically saved when you interact with AI</li>
+            <li>Each conversation includes your voice transcripts and AI responses</li>
+            <li>Context information is preserved with each message</li>
+            <li>Load a conversation to continue where you left off</li>
+          </ul>
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div style={{ padding: '1rem', fontFamily: 'sans-serif' }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '1rem' }}>
         <h2 style={{ margin: 0 }}>CursorVoice</h2>
-        <button
-          onClick={openSettings}
-          style={{
-            fontSize: '1rem',
-            padding: '0.5rem 1rem',
-            backgroundColor: '#f5f5f5',
-            border: '1px solid #ccc',
-            borderRadius: '4px',
-            cursor: 'pointer'
-          }}
-        >
-          ⚙️ Settings
-        </button>
+        <div style={{ display: 'flex', gap: '0.5rem' }}>
+          <button
+            onClick={openHistory}
+            style={{
+              fontSize: '1rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: '#f5f5f5',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            📚 History
+          </button>
+          <button
+            onClick={openSettings}
+            style={{
+              fontSize: '1rem',
+              padding: '0.5rem 1rem',
+              backgroundColor: '#f5f5f5',
+              border: '1px solid #ccc',
+              borderRadius: '4px',
+              cursor: 'pointer'
+            }}
+          >
+            ⚙️ Settings
+          </button>
+        </div>
       </div>
       
       <div style={{ 
@@ -645,6 +1016,19 @@ const App = () => {
             (⚠️ API key not configured)
           </span>
         )}
+      </div>
+
+      <div style={{ 
+        marginBottom: '1rem', 
+        padding: '0.5rem', 
+        backgroundColor: isNewConversation ? '#e8f5e8' : '#fff3e0', 
+        borderRadius: '4px',
+        fontSize: '0.9rem'
+      }}>
+        <strong>Conversation:</strong> {isNewConversation ? 
+          '✨ New conversation' : 
+          `💬 ${currentConversation?.title || 'Loaded conversation'}`
+        }
       </div>
 
       {/* Context Awareness Section */}
@@ -808,6 +1192,22 @@ const App = () => {
         >
           {aiLoading ? '🤖 Processing...' : `${getProviderIcon(aiProvider)} Send to ${getProviderName(aiProvider)}${includeContext ? ' (with context)' : ''}`}
         </button>
+        
+        <button
+          onClick={saveCurrentConversation}
+          disabled={!finalTranscript.trim() && !aiResponse.trim()}
+          style={{ 
+            fontSize: '1rem', 
+            padding: '0.5rem 1rem',
+            backgroundColor: (!finalTranscript.trim() && !aiResponse.trim()) ? '#999' : '#9c27b0',
+            color: 'white',
+            border: 'none',
+            borderRadius: '4px',
+            cursor: (!finalTranscript.trim() && !aiResponse.trim()) ? 'not-allowed' : 'pointer'
+          }}
+        >
+          💾 Save Conversation
+        </button>
       </div>
       
       <div style={{ marginBottom: '1rem' }}>
@@ -889,11 +1289,49 @@ const App = () => {
           </div>
         </div>
       )}
+
+      {/* Keyboard Shortcuts Help */}
+      <div style={{ 
+        marginTop: '2rem', 
+        padding: '1rem', 
+        backgroundColor: '#f9f9f9', 
+        borderRadius: '4px',
+        fontSize: '0.85rem',
+        color: '#666'
+      }}>
+        <strong>⌨️ Keyboard Shortcuts:</strong>
+        <ul style={{ margin: '0.5rem 0', paddingLeft: '1.5rem' }}>
+          <li><kbd>Ctrl+Shift+V</kbd> (Mac: <kbd>Cmd+Shift+V</kbd>) - Toggle voice listening</li>
+          <li><kbd>Ctrl+Shift+A</kbd> (Mac: <kbd>Cmd+Shift+A</kbd>) - Send to AI</li>
+          <li><kbd>Ctrl+Shift+C</kbd> (Mac: <kbd>Cmd+Shift+C</kbd>) - Clear transcript</li>
+          <li><kbd>Ctrl+Shift+,</kbd> (Mac: <kbd>Cmd+Shift+,</kbd>) - Open settings</li>
+          <li><kbd>Ctrl+Shift+H</kbd> (Mac: <kbd>Cmd+Shift+H</kbd>) - Open history</li>
+          <li><kbd>Ctrl+Shift+S</kbd> (Mac: <kbd>Cmd+Shift+S</kbd>) - Save conversation</li>
+        </ul>
+        <div style={{ fontSize: '0.8rem', fontStyle: 'italic', marginTop: '0.5rem' }}>
+          Note: Shortcuts work when CursorVoice panel is open and editor is focused
+        </div>
+      </div>
       
       <style>{`
         @keyframes waveform {
           0%, 100% { height: 10px; }
           50% { height: 30px; }
+        }
+        
+        kbd {
+          background-color: #f7f7f7;
+          border: 1px solid #ccc;
+          border-radius: 3px;
+          box-shadow: 0 1px 0 rgba(0,0,0,0.2), 0 0 0 2px #fff inset;
+          color: #333;
+          display: inline-block;
+          font-family: 'Consolas', 'Monaco', monospace;
+          font-size: 0.8em;
+          font-weight: bold;
+          line-height: 1;
+          padding: 2px 4px;
+          white-space: nowrap;
         }
       `}</style>
     </div>
