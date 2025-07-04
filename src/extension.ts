@@ -5,7 +5,7 @@ import Anthropic from '@anthropic-ai/sdk';
 
 // Message types for webview communication
 interface WebviewMessage {
-  type: 'transcript' | 'ai-request' | 'error' | 'status' | 'settings-get' | 'settings-save';
+  type: 'transcript' | 'ai-request' | 'error' | 'status' | 'settings-get' | 'settings-save' | 'context-get';
   data: any;
 }
 
@@ -23,6 +23,7 @@ interface AIRequestMessage {
   data: {
     prompt: string;
     context?: string;
+    includeContext?: boolean;
   };
 }
 
@@ -35,6 +36,19 @@ interface SettingsMessage {
     openaiModel: string;
     claudeModel: string;
   };
+}
+
+interface CodeContext {
+  fileName?: string;
+  language?: string;
+  fileContent?: string;
+  selectedText?: string;
+  cursorPosition?: {
+    line: number;
+    character: number;
+  };
+  workspaceName?: string;
+  relativePath?: string;
 }
 
 // AI provider instances
@@ -84,6 +98,9 @@ export function activate(context: vscode.ExtensionContext) {
           case 'settings-save':
             handleSettingsSave(message.data, panel);
             break;
+          case 'context-get':
+            handleContextGet(panel);
+            break;
         }
       },
       undefined,
@@ -112,7 +129,7 @@ export function activate(context: vscode.ExtensionContext) {
       type: 'init',
       data: { 
         status: 'Extension ready',
-        capabilities: ['speech-recognition', 'ai-processing'],
+        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness'],
         aiProvider: aiProvider,
         hasApiKey: hasApiKey
       }
@@ -161,6 +178,93 @@ function getApiKey(provider: string): string {
   }
 }
 
+function gatherCodeContext(): CodeContext {
+  const activeEditor = vscode.window.activeTextEditor;
+  const context: CodeContext = {};
+
+  if (activeEditor) {
+    const document = activeEditor.document;
+    
+    // Basic file information
+    context.fileName = path.basename(document.fileName);
+    context.language = document.languageId;
+    context.relativePath = vscode.workspace.asRelativePath(document.fileName);
+    
+    // Cursor position
+    const position = activeEditor.selection.active;
+    context.cursorPosition = {
+      line: position.line + 1, // Convert to 1-based indexing
+      character: position.character + 1
+    };
+
+    // Selected text
+    const selection = activeEditor.selection;
+    if (!selection.isEmpty) {
+      context.selectedText = document.getText(selection);
+    }
+
+    // File content (limit to reasonable size)
+    const fullContent = document.getText();
+    if (fullContent.length <= 10000) {
+      // Include full content for smaller files
+      context.fileContent = fullContent;
+    } else {
+      // For larger files, include content around cursor position
+      const startLine = Math.max(0, position.line - 50);
+      const endLine = Math.min(document.lineCount - 1, position.line + 50);
+      const range = new vscode.Range(startLine, 0, endLine, document.lineAt(endLine).text.length);
+      context.fileContent = `... (showing lines ${startLine + 1}-${endLine + 1} around cursor) ...\n` + 
+                           document.getText(range);
+    }
+  }
+
+  // Workspace information
+  const workspaceFolder = vscode.workspace.workspaceFolders?.[0];
+  if (workspaceFolder) {
+    context.workspaceName = workspaceFolder.name;
+  }
+
+  return context;
+}
+
+function formatContextForAI(context: CodeContext): string {
+  let contextString = "## Current Context\n\n";
+  
+  if (context.workspaceName) {
+    contextString += `**Workspace:** ${context.workspaceName}\n`;
+  }
+  
+  if (context.fileName) {
+    contextString += `**File:** ${context.relativePath || context.fileName}\n`;
+    contextString += `**Language:** ${context.language}\n`;
+    
+    if (context.cursorPosition) {
+      contextString += `**Cursor Position:** Line ${context.cursorPosition.line}, Column ${context.cursorPosition.character}\n`;
+    }
+  }
+
+  if (context.selectedText) {
+    contextString += `\n**Selected Text:**\n\`\`\`${context.language || ''}\n${context.selectedText}\n\`\`\`\n`;
+  }
+
+  if (context.fileContent) {
+    contextString += `\n**Current File Content:**\n\`\`\`${context.language || ''}\n${context.fileContent}\n\`\`\`\n`;
+  }
+
+  contextString += "\n---\n\n";
+  
+  return contextString;
+}
+
+function handleContextGet(panel: vscode.WebviewPanel) {
+  const context = gatherCodeContext();
+  
+  panel.webview.postMessage({
+    type: 'context-data',
+    data: context
+  });
+}
+
 function handleSettingsGet(panel: vscode.WebviewPanel) {
   const config = vscode.workspace.getConfiguration('cursorVoice');
   
@@ -207,7 +311,7 @@ async function handleSettingsSave(data: any, panel: vscode.WebviewPanel) {
       type: 'init',
       data: { 
         status: 'Extension ready',
-        capabilities: ['speech-recognition', 'ai-processing'],
+        capabilities: ['speech-recognition', 'ai-processing', 'context-awareness'],
         aiProvider: data.aiProvider,
         hasApiKey: hasApiKey
       }
@@ -265,12 +369,21 @@ async function handleAIRequest(data: any, panel: vscode.WebviewPanel) {
   }
 
   try {
+    let prompt = data.prompt;
+    
+    // Add context if requested
+    if (data.includeContext) {
+      const context = gatherCodeContext();
+      const contextString = formatContextForAI(context);
+      prompt = contextString + "**User Question:** " + data.prompt;
+    }
+    
     let response: string;
     
     if (aiProvider === 'openai') {
-      response = await handleOpenAIRequest(data.prompt, config);
+      response = await handleOpenAIRequest(prompt, config);
     } else if (aiProvider === 'claude') {
-      response = await handleClaudeRequest(data.prompt, config);
+      response = await handleClaudeRequest(prompt, config);
     } else {
       throw new Error(`Unsupported AI provider: ${aiProvider}`);
     }
@@ -280,7 +393,8 @@ async function handleAIRequest(data: any, panel: vscode.WebviewPanel) {
       data: {
         response: response,
         status: 'success',
-        provider: aiProvider
+        provider: aiProvider,
+        includedContext: data.includeContext || false
       }
     });
     
@@ -312,14 +426,14 @@ async function handleOpenAIRequest(prompt: string, config: vscode.WorkspaceConfi
     messages: [
       {
         role: 'system',
-        content: 'You are a helpful AI assistant integrated into VS Code. You help developers with coding questions, explanations, and general programming tasks. Keep responses concise and practical.'
+        content: 'You are a helpful AI assistant integrated into VS Code. You help developers with coding questions, explanations, and general programming tasks. When provided with code context, use it to give more specific and relevant answers. Keep responses concise and practical.'
       },
       {
         role: 'user',
         content: prompt
       }
     ],
-    max_tokens: 1000,
+    max_tokens: 1500,
     temperature: 0.7
   });
 
@@ -335,9 +449,9 @@ async function handleClaudeRequest(prompt: string, config: vscode.WorkspaceConfi
   
   const response = await anthropicClient.messages.create({
     model: model,
-    max_tokens: 1000,
+    max_tokens: 1500,
     temperature: 0.7,
-    system: 'You are a helpful AI assistant integrated into VS Code. You help developers with coding questions, explanations, and general programming tasks. Keep responses concise and practical.',
+    system: 'You are a helpful AI assistant integrated into VS Code. You help developers with coding questions, explanations, and general programming tasks. When provided with code context, use it to give more specific and relevant answers. Keep responses concise and practical.',
     messages: [
       {
         role: 'user',

@@ -15,7 +15,7 @@ const vscode = window.acquireVsCodeApi();
 
 // Message types for extension communication
 interface ExtensionMessage {
-  type: 'init' | 'transcript-ack' | 'ai-response' | 'error' | 'settings-data' | 'settings-saved';
+  type: 'init' | 'transcript-ack' | 'ai-response' | 'error' | 'settings-data' | 'settings-saved' | 'context-data';
   data: any;
 }
 
@@ -25,6 +25,19 @@ interface Settings {
   claudeApiKey: string;
   openaiModel: string;
   claudeModel: string;
+}
+
+interface CodeContext {
+  fileName?: string;
+  language?: string;
+  fileContent?: string;
+  selectedText?: string;
+  cursorPosition?: {
+    line: number;
+    character: number;
+  };
+  workspaceName?: string;
+  relativePath?: string;
 }
 
 const App = () => {
@@ -41,6 +54,12 @@ const App = () => {
   const [hasApiKey, setHasApiKey] = useState(false);
   const [aiResponseProvider, setAiResponseProvider] = useState('');
   const [successMessage, setSuccessMessage] = useState('');
+  
+  // Context awareness state
+  const [includeContext, setIncludeContext] = useState(true);
+  const [currentContext, setCurrentContext] = useState<CodeContext>({});
+  const [showContextPreview, setShowContextPreview] = useState(false);
+  const [includedContext, setIncludedContext] = useState(false);
   
   // Settings state
   const [settings, setSettings] = useState<Settings>({
@@ -66,6 +85,8 @@ const App = () => {
           setAiProvider(message.data.aiProvider || 'openai');
           setHasApiKey(message.data.hasApiKey || false);
           console.log('Extension capabilities:', message.data.capabilities);
+          // Request initial context
+          requestContext();
           break;
         case 'transcript-ack':
           console.log('Transcript acknowledged:', message.data.timestamp);
@@ -73,6 +94,7 @@ const App = () => {
         case 'ai-response':
           setAiResponse(message.data.response);
           setAiResponseProvider(message.data.provider || '');
+          setIncludedContext(message.data.includedContext || false);
           setAiLoading(false);
           if (message.data.status === 'error') {
             setError(message.data.response);
@@ -96,6 +118,9 @@ const App = () => {
           } else {
             setError(message.data.message);
           }
+          break;
+        case 'context-data':
+          setCurrentContext(message.data);
           break;
       }
     };
@@ -199,6 +224,13 @@ const App = () => {
     };
   }, []);
 
+  const requestContext = () => {
+    vscode.postMessage({
+      type: 'context-get',
+      data: {}
+    });
+  };
+
   const toggleListening = () => {
     if (!isSupported) return;
     
@@ -216,6 +248,7 @@ const App = () => {
     setFinalTranscript('');
     setAiResponse('');
     setAiResponseProvider('');
+    setIncludedContext(false);
   };
 
   const sendToAI = () => {
@@ -237,7 +270,8 @@ const App = () => {
       type: 'ai-request',
       data: {
         prompt: finalTranscript,
-        context: 'Voice transcription for AI processing'
+        context: 'Voice transcription for AI processing',
+        includeContext: includeContext
       }
     });
   };
@@ -292,6 +326,29 @@ const App = () => {
     if (!key) return '';
     if (key.length <= 8) return '•'.repeat(key.length);
     return key.substring(0, 4) + '•'.repeat(key.length - 8) + key.substring(key.length - 4);
+  };
+
+  const formatContextPreview = (context: CodeContext) => {
+    if (!context.fileName) return 'No file open';
+    
+    let preview = `📁 ${context.workspaceName || 'Unknown workspace'}\n`;
+    preview += `📄 ${context.relativePath || context.fileName}\n`;
+    preview += `💻 ${context.language || 'unknown'}\n`;
+    
+    if (context.cursorPosition) {
+      preview += `📍 Line ${context.cursorPosition.line}, Col ${context.cursorPosition.character}\n`;
+    }
+    
+    if (context.selectedText) {
+      preview += `🎯 ${context.selectedText.length} characters selected\n`;
+    }
+    
+    if (context.fileContent) {
+      const lines = context.fileContent.split('\n').length;
+      preview += `📝 ${lines} lines of code`;
+    }
+    
+    return preview;
   };
 
   if (currentView === 'settings') {
@@ -589,6 +646,82 @@ const App = () => {
           </span>
         )}
       </div>
+
+      {/* Context Awareness Section */}
+      <div style={{ 
+        marginBottom: '1rem', 
+        padding: '0.75rem', 
+        backgroundColor: '#f3e5f5', 
+        borderRadius: '4px',
+        fontSize: '0.9rem'
+      }}>
+        <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '0.5rem' }}>
+          <div style={{ display: 'flex', alignItems: 'center' }}>
+            <strong>🧠 Context Awareness:</strong>
+            <label style={{ display: 'flex', alignItems: 'center', marginLeft: '0.5rem' }}>
+              <input
+                type="checkbox"
+                checked={includeContext}
+                onChange={(e) => setIncludeContext(e.target.checked)}
+                style={{ marginRight: '0.25rem' }}
+              />
+              Include current code context
+            </label>
+          </div>
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            <button
+              onClick={requestContext}
+              style={{
+                fontSize: '0.8rem',
+                padding: '0.25rem 0.5rem',
+                backgroundColor: '#e1bee7',
+                border: '1px solid #ba68c8',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              🔄 Refresh
+            </button>
+            <button
+              onClick={() => setShowContextPreview(!showContextPreview)}
+              style={{
+                fontSize: '0.8rem',
+                padding: '0.25rem 0.5rem',
+                backgroundColor: '#e1bee7',
+                border: '1px solid #ba68c8',
+                borderRadius: '4px',
+                cursor: 'pointer'
+              }}
+            >
+              {showContextPreview ? '👁️ Hide' : '👁️ Preview'}
+            </button>
+          </div>
+        </div>
+        
+        <div style={{ fontSize: '0.8rem', color: '#666' }}>
+          {formatContextPreview(currentContext)}
+        </div>
+
+        {showContextPreview && currentContext.fileContent && (
+          <div style={{
+            marginTop: '0.5rem',
+            padding: '0.5rem',
+            backgroundColor: '#fff',
+            border: '1px solid #ddd',
+            borderRadius: '4px',
+            fontSize: '0.75rem',
+            maxHeight: '200px',
+            overflow: 'auto',
+            fontFamily: 'monospace'
+          }}>
+            <strong>File Content Preview:</strong>
+            <pre style={{ margin: '0.25rem 0 0 0', whiteSpace: 'pre-wrap' }}>
+              {currentContext.fileContent.substring(0, 500)}
+              {currentContext.fileContent.length > 500 && '...'}
+            </pre>
+          </div>
+        )}
+      </div>
       
       {successMessage && (
         <div style={{ 
@@ -673,7 +806,7 @@ const App = () => {
             cursor: (!finalTranscript.trim() || aiLoading || !hasApiKey) ? 'not-allowed' : 'pointer'
           }}
         >
-          {aiLoading ? '🤖 Processing...' : `${getProviderIcon(aiProvider)} Send to ${getProviderName(aiProvider)}`}
+          {aiLoading ? '🤖 Processing...' : `${getProviderIcon(aiProvider)} Send to ${getProviderName(aiProvider)}${includeContext ? ' (with context)' : ''}`}
         </button>
       </div>
       
@@ -746,7 +879,10 @@ const App = () => {
           }}
         >
           <div style={{ marginBottom: '0.5rem' }}>
-            <strong>{getProviderIcon(aiResponseProvider)} {getProviderName(aiResponseProvider)} Response:</strong>
+            <strong>
+              {getProviderIcon(aiResponseProvider)} {getProviderName(aiResponseProvider)} Response:
+              {includedContext && <span style={{ color: '#666', fontSize: '0.9rem' }}> (with context)</span>}
+            </strong>
           </div>
           <div style={{ color: '#333', whiteSpace: 'pre-wrap' }}>
             {aiResponse}
